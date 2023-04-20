@@ -171,7 +171,7 @@ int main(int argc, char *argv[]){
                 case 'l':
                 {
                     printf("->   Moving Left\n");
-                    sci_return_code code = scip_send_change_location(scip, SCI_NAME_S, POINT_LOCATION_CHANGE_TO_RIGHT);
+                    sci_return_code code = scip_send_change_location(scip, SCI_NAME_S, POINT_LOCATION_CHANGE_TO_LEFT);
                     break;
                 }
                 case 'r':
