@@ -31,7 +31,7 @@ scip_t * scip;
  /** added secsys code start **/
 
 /**
-  * @brief Signal handler for non existing controller pipe
+  * @brief Signal handler for not read controller pipe
   * @param 
   */
 void sig_pipe_handler(int s) {
@@ -47,8 +47,7 @@ void send_cntrl_state(char dev, char state)
 {
     int fd;
     char * fifo = IL_OUT_FIFO;
-    mkfifo(fifo, 0666);
-    fd = open(fifo, O_WRONLY);
+    fd = open(fifo, O_WRONLY | O_NONBLOCK);
 
     printf("Sending interlocking status %c ...\n", state);
 
@@ -106,7 +105,6 @@ void onChangeLocation(scip_t * p, char * sender, scip_point_target_location loca
     status = system(script);
 
     printf("Got exit code %d \n", (status / 256)); /* debug & remove*/
-    //int exitcode = status / 256;
 
     switch ((status / 256))
     {
@@ -193,6 +191,11 @@ int main(int argc, char *argv[]){
 
     /** added secsys code start **/
     signal(SIGPIPE, sig_pipe_handler);
+    if (strcmp(argv[1], "s") == 0)
+    {
+        char * fifo = IL_OUT_FIFO;
+        mkfifo(fifo, 0666);
+    }
     /** added secsys code end **/
 
 
