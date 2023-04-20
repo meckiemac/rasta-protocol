@@ -6,6 +6,9 @@
 #include <memory.h>
 #include <rmemory.h>
 
+/* Additiona: Location of the python script */
+#define POINT_MOVE_SCRIPT "/home/meckie/src/point_move/point_move.py"
+
 #define CONFIG_PATH_S "../../../rasta_server.cfg"
 #define CONFIG_PATH_C "../../../rasta_client1.cfg"
 
@@ -43,8 +46,51 @@ void onHandshakeComplete(struct rasta_notification_result *result){
 void onChangeLocation(scip_t * p, char * sender, scip_point_target_location location){
     printf("Received location change to 0x%02X from %s\n", location, sci_get_name_string(sender));
 
+    /** added secsys code start **/
+    int status;
+    char script[] = POINT_MOVE_SCRIPT;
+    char s_arg[3] = { 0x20, 0x20, 0x0 };
+
+    scip_point_location scip_location = POINT_NO_TARGET_LOCATION;
+
+    if(location == POINT_LOCATION_CHANGE_TO_RIGHT)
+    {
+       s_arg[1] = '1';
+    }
+    else if (location == POINT_LOCATION_CHANGE_TO_LEFT)
+    {
+        s_arg[1] = '2';
+    }
+
+    printf("Running script %s \n", strcat(script,s_arg)); /* debug & remove*/
+
+    status = system(script);
+
+    printf("Got exit code %d \n", (status / 256)); /* debug & remove*/
+    //int exitcode = status / 256;
+
+    switch ((status / 256))
+    {
+        case 5: /* left position */
+        {
+            scip_location = POINT_LOCATION_LEFT;
+            break;
+        }
+        case 6: /* right position */
+        {
+            scip_location = POINT_LOCATION_RIGHT;
+            break;
+        }
+        default: /* no position */
+        {
+            scip_location = POINT_NO_TARGET_LOCATION;
+            break;
+        }
+    }
+    /** added secsys code end **/
+
     printf("Sending back location status...\n");
-    sci_return_code code = scip_send_location_status(p, sender, POINT_LOCATION_RIGHT);
+    sci_return_code code = scip_send_location_status(p, sender, scip_location);
     if (code == SUCCESS){
         printf("Sent location status\n");
     } else{
@@ -109,7 +155,44 @@ int main(int argc, char *argv[]){
         scip_register_sci_name(scip, SCI_NAME_S, ID_S);
     }
 
-    getchar();
+    /** added secsys code start **/
+    if (strcmp(argv[1], "s") == 0)
+    {
+        getchar();
+    }
+    else
+    {
+        int stop = 0;
+        while(!stop)
+        {
+            char m = getchar();
+            switch(m) /* move point as client */
+            {
+                case 'l':
+                {
+                    printf("->   Moving Left\n");
+                    sci_return_code code = scip_send_change_location(scip, SCI_NAME_S, POINT_LOCATION_CHANGE_TO_RIGHT);
+                    break;
+                }
+                case 'r':
+                {
+                    printf("->   Moving Right\n");
+                    sci_return_code code = scip_send_change_location(scip, SCI_NAME_S, POINT_LOCATION_CHANGE_TO_RIGHT);
+                    break;
+                }
+                case 'q':
+                {
+                    stop = 1;
+                    break;
+                }
+                default:
+                {
+                    break;
+                }
+            }
+        }
+    }
+    /** added secsys code end **/
 
     scip_cleanup(scip);
     sr_cleanup(&h);
