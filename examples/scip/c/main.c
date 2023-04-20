@@ -8,6 +8,7 @@
 
 /* Additiona: Location of the python script */
 #define POINT_MOVE_SCRIPT "/home/meckie/src/point_move/point_move.py"
+#define IL_OUT_FIFO "/run/interlocking.sock"
 
 #define CONFIG_PATH_S "../../../rasta_server.cfg"
 #define CONFIG_PATH_C "../../../rasta_client1.cfg"
@@ -19,6 +20,37 @@
 #define SCI_NAME_C "C"
 
 scip_t * scip;
+
+ /** added secsys code start **/
+
+/**
+  * @brief Signal handler for non existing controller pipe
+  * @param 
+  */
+void sig_pipe_handler(int s) {
+    printf("Security Controller not listening\n");
+}
+
+/** 
+  * @brief Exports the interlocking state and commands to the security system 
+  * @param dev  Export the state for the appropriate device (1 byte)
+  * @param state The interlocking state to export. l/r for move to left or right and x/y feedback of x=l/y=r position received
+  */
+void send_cntrl_state(char dev, char state)
+{
+    int fd;
+    char * fifo = IL_OUT_FIFO;
+    mkfifo(fifo, 0666);
+    fd = open(fifo, O_WRONLY);
+
+    printf("Sending interlocking status %c ...\n", state);
+
+    char wr_req[3] = {dev, state, '\0'};
+
+    write(fd, wr_req, 3);
+    close(fd);    
+}
+ /** added secsys code end **/
 
 void printHelpAndExit(void){
     printf("Invalid Arguments!\n use 's' to start in server mode and 'c' client mode.\n");
@@ -100,6 +132,11 @@ void onChangeLocation(scip_t * p, char * sender, scip_point_target_location loca
 
 void onLocationStatus(scip_t * p, char * sender, scip_point_location location){
     printf("Received location status from %s. Point is at position 0x%02X.\n",sci_get_name_string(sender), location);
+    switch(location)
+    {
+        
+    }
+     send_cntrl_state('a', 'l');
 }
 
 int main(int argc, char *argv[]){
@@ -126,6 +163,11 @@ int main(int argc, char *argv[]){
 #endif
     toServer[0].port = 8888;
     toServer[1].port = 8889;
+
+    /** added secsys code start **/
+    signal(SIGPIPE, sig_pipe_handler);
+    /** added secsys code end **/
+
 
     printf("Server at %s:%d and %s:%d\n", toServer[0].ip, toServer[0].port, toServer[1].ip, toServer[1].port);
 
@@ -172,12 +214,24 @@ int main(int argc, char *argv[]){
                 {
                     printf("->   Moving Left\n");
                     sci_return_code code = scip_send_change_location(scip, SCI_NAME_S, POINT_LOCATION_CHANGE_TO_LEFT);
+                    if (code == SUCCESS){
+                        send_cntrl_state('a', 'l');
+                    } else
+                    {
+                        printf("Something went wrong, error code 0x%02X was returned!\n", code);
+                    }
                     break;
                 }
                 case 'r':
                 {
                     printf("->   Moving Right\n");
                     sci_return_code code = scip_send_change_location(scip, SCI_NAME_S, POINT_LOCATION_CHANGE_TO_RIGHT);
+                    if (code == SUCCESS){
+                        send_cntrl_state('a', 'r');
+                    } else
+                    {
+                        printf("Something went wrong, error code 0x%02X was returned!\n", code);
+                    }
                     break;
                 }
                 case 'q':
