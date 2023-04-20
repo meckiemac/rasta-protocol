@@ -6,6 +6,13 @@
 #include <memory.h>
 #include <rmemory.h>
 
+#include <string.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <signal.h>
+
 /* Additiona: Location of the python script */
 #define POINT_MOVE_SCRIPT "/home/meckie/src/point_move/point_move.py"
 #define IL_OUT_FIFO "/run/interlocking.sock"
@@ -134,9 +141,29 @@ void onLocationStatus(scip_t * p, char * sender, scip_point_location location){
     printf("Received location status from %s. Point is at position 0x%02X.\n",sci_get_name_string(sender), location);
     switch(location)
     {
-        
+        case POINT_LOCATION_LEFT:
+        {
+            send_cntrl_state('a', 'x');
+            break;
+        }
+        case POINT_LOCATION_RIGHT:
+        {
+            send_cntrl_state('a', 'y');
+            break;
+        }
+        case POINT_NO_TARGET_LOCATION:
+        case POINT_BUMPED:
+        {
+            send_cntrl_state('a', 'z');
+            break;
+        }
+        default:
+        {
+            send_cntrl_state('a', 'z');
+            break;
+        }
     }
-     send_cntrl_state('a', 'l');
+     
 }
 
 int main(int argc, char *argv[]){
