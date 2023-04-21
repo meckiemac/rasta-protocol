@@ -53,7 +53,7 @@ void send_cntrl_state(char dev, char state)
 
     char wr_req[3] = {dev, state, '\0'};
 
-    write(fd, wr_req, 3);
+    write(fd, wr_req, 2);
     close(fd);    
 }
  /** added secsys code end **/
