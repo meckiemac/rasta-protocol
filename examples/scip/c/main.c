@@ -6,16 +6,19 @@
 #include <memory.h>
 #include <rmemory.h>
 
+/** added secsys code start **/
 #include <string.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <signal.h>
+#include <pthread.h>
 
-/* Additiona: Location of the python script */
+
 #define POINT_MOVE_SCRIPT "/home/meckie/src/point_move/point_move.py"
 #define IL_OUT_FIFO "/run/interlocking.sock"
+/** added secsys code end **/
 
 #define CONFIG_PATH_S "../../../rasta_server.cfg"
 #define CONFIG_PATH_C "../../../rasta_client1.cfg"
@@ -28,7 +31,12 @@
 
 scip_t * scip;
 
- /** added secsys code start **/
+/** added secsys code start **/
+pthread_mutex_t mutex;  // Mutex for synchronization
+pthread_cond_t cond;    // Condition variable for signaling
+int target_location = 0;        // Shared variable for command
+scip_t *tmp_p;
+char *tmp_sender;
 
 /**
   * @brief Signal handler for not read controller pipe
@@ -36,6 +44,88 @@ scip_t * scip;
   */
 void sig_pipe_handler(int s) {
     printf("Security Controller not listening\n");
+}
+
+void* thread_func(void* arg) {
+    //int thread_id = *(int*)arg; // Get thread ID from argument
+    //printf("Thread %d started\n", thread_id);
+
+    int status;
+    char script[sizeof(POINT_MOVE_SCRIPT) + 3 ] = { 0, }; 
+    memcpy(&script, &POINT_MOVE_SCRIPT, sizeof(POINT_MOVE_SCRIPT));
+    char s_arg[3] = { 0x20, 0x20, 0x0 };
+
+    scip_point_location scip_location = POINT_NO_TARGET_LOCATION;
+
+    while (1) {
+        pthread_mutex_lock(&mutex); // Acquire the mutex
+
+        // Sleep until signaled or command is available
+        while (target_location == 0) {
+            pthread_cond_wait(&cond, &mutex);
+        }
+
+        //printf("Thread %d received command: %d\n", thread_id, command);
+        /* move point here !*/
+        switch(target_location)
+        {
+            case 1: /* move to left */
+            {
+                s_arg[1] = '0';
+                break;
+            }
+            case 2: /* move to right */
+            {
+                s_arg[1] = '1';
+                break;
+            }
+            default:
+            {
+                /* Error Message? */
+                break;
+            }
+        }
+        strncat(script,s_arg,2);
+        printf("Running script %s \n", script); /* debug & remove*/
+
+        status = system(script);
+        printf("Got exit code %d \n", (status / 256)); /* debug & remove*/
+
+        switch ((status / 256))
+        {
+            case 5: /* left position */
+            {
+                scip_location = POINT_LOCATION_LEFT;
+                break;
+            }
+            case 6: /* right position */
+            {
+                scip_location = POINT_LOCATION_RIGHT;
+                break;
+            }
+            default: /* no position */
+            {
+                scip_location = POINT_NO_TARGET_LOCATION;
+                break;
+            }
+        }
+        printf("Sending back location status...\n");
+        sci_return_code code = scip_send_location_status(tmp_p, tmp_sender, scip_location);
+        if (code == SUCCESS){
+            printf("Sent location status\n");
+        }
+        else
+        {
+            printf("Something went wrong, error code 0x%02X was returned!\n", code);
+        }
+        tmp_p = NULL;
+        tmp_sender = NULL;
+        target_location = 0; // Reset command after processing
+
+        pthread_mutex_unlock(&mutex); // Release the mutex
+    }
+
+    return NULL;
 }
 
 /** 
@@ -85,54 +175,29 @@ void onChangeLocation(scip_t * p, char * sender, scip_point_target_location loca
     printf("Received location change to 0x%02X from %s\n", location, sci_get_name_string(sender));
 
     /** added secsys code start **/
-    int status;
-    char script[] = POINT_MOVE_SCRIPT;
-    char s_arg[3] = { 0x20, 0x20, 0x0 };
-
-    scip_point_location scip_location = POINT_NO_TARGET_LOCATION;
-
-    if(location == POINT_LOCATION_CHANGE_TO_RIGHT)
+    pthread_mutex_lock(&mutex); // Acquire the mutex
+    if(location == POINT_LOCATION_CHANGE_TO_LEFT)
     {
-       s_arg[1] = '1';
+       target_location = 1; 
     }
-    else if (location == POINT_LOCATION_CHANGE_TO_LEFT)
+    else if (location == POINT_LOCATION_CHANGE_TO_RIGHT)
     {
-        s_arg[1] = '2';
+        target_location = 2;
     }
+    tmp_p = p;
+    tmp_sender = sender;
 
-    printf("Running script %s \n", strcat(script,s_arg)); /* debug & remove*/
-
-    status = system(script);
-
-    printf("Got exit code %d \n", (status / 256)); /* debug & remove*/
-
-    switch ((status / 256))
-    {
-        case 5: /* left position */
-        {
-            scip_location = POINT_LOCATION_LEFT;
-            break;
-        }
-        case 6: /* right position */
-        {
-            scip_location = POINT_LOCATION_RIGHT;
-            break;
-        }
-        default: /* no position */
-        {
-            scip_location = POINT_NO_TARGET_LOCATION;
-            break;
-        }
-    }
+    pthread_cond_signal(&cond); // Signal the thread
+    pthread_mutex_unlock(&mutex); // Release the mutex
     /** added secsys code end **/
 
-    printf("Sending back location status...\n");
-    sci_return_code code = scip_send_location_status(p, sender, scip_location);
-    if (code == SUCCESS){
-        printf("Sent location status\n");
-    } else{
-        printf("Something went wrong, error code 0x%02X was returned!\n", code);
-    }
+    //printf("Sending back location status...\n");
+    //sci_return_code code = scip_send_location_status(p, sender, scip_location);
+    //if (code == SUCCESS){
+    //    printf("Sent location status\n");
+    //} else{
+    //    printf("Something went wrong, error code 0x%02X was returned!\n", code);
+    //}
 }
 
 void onLocationStatus(scip_t * p, char * sender, scip_point_location location){
@@ -190,11 +255,21 @@ int main(int argc, char *argv[]){
     toServer[1].port = 8889;
 
     /** added secsys code start **/
-    signal(SIGPIPE, sig_pipe_handler);
-    if (strcmp(argv[1], "s") == 0)
+    pthread_t tid;
+    if (strcmp(argv[1], "c") == 0)
     {
+        /* client: add pipe singal handler and create fifo */
+        signal(SIGPIPE, sig_pipe_handler);
         char * fifo = IL_OUT_FIFO;
         mkfifo(fifo, 0666);
+    }
+    else if (strcmp(argv[1], "s") == 0)
+    {
+        /* server: create thread for unblock python script call */
+        pthread_mutex_init(&mutex, NULL); 
+        pthread_cond_init(&cond, NULL); 
+        int thread_id = 1;
+        pthread_create(&tid, NULL, thread_func, &thread_id);
     }
     /** added secsys code end **/
 
@@ -276,6 +351,11 @@ int main(int argc, char *argv[]){
             }
         }
     }
+
+    pthread_join(tid, NULL);
+
+    pthread_cond_destroy(&cond);   
+    pthread_mutex_destroy(&mutex);
     /** added secsys code end **/
 
     scip_cleanup(scip);
