@@ -46,6 +46,12 @@ void sig_pipe_handler(int s) {
     printf("Security Controller not listening\n");
 }
 
+/**
+ * @brief 
+ * 
+ * @param arg 
+ * @return void* 
+ */
 void* thread_func(void* arg) {
     //int thread_id = *(int*)arg; // Get thread ID from argument
     //printf("Thread %d started\n", thread_id);
@@ -53,7 +59,8 @@ void* thread_func(void* arg) {
     int status;
     char script[sizeof(POINT_MOVE_SCRIPT) + 3 ] = { 0, }; 
     memcpy(&script, &POINT_MOVE_SCRIPT, sizeof(POINT_MOVE_SCRIPT));
-    char s_arg[3] = { 0x20, 0x20, 0x0 };
+    char s_arg[] = { 0x20, 0x20, 0x00 };
+    strncat(script,s_arg,3);
 
     scip_point_location scip_location = POINT_NO_TARGET_LOCATION;
 
@@ -71,12 +78,12 @@ void* thread_func(void* arg) {
         {
             case 1: /* move to left */
             {
-                s_arg[1] = '0';
+                script[sizeof(script) - 2] = '0';
                 break;
             }
             case 2: /* move to right */
             {
-                s_arg[1] = '1';
+                script[sizeof(script) - 2] = '1';
                 break;
             }
             default:
@@ -85,7 +92,6 @@ void* thread_func(void* arg) {
                 break;
             }
         }
-        strncat(script,s_arg,2);
         printf("Running script %s \n", script); /* debug & remove*/
 
         status = system(script);
@@ -146,6 +152,7 @@ void send_cntrl_state(char dev, char state)
     write(fd, wr_req, 2);
     close(fd);    
 }
+
  /** added secsys code end **/
 
 void printHelpAndExit(void){
