@@ -23,8 +23,8 @@ endif(BUILD_LOCAL_EXAMPLES)
 if(BUILD_REMOTE_EXAMPLES)
     # scip_example
     add_executable(scip_example
-            scip/c/main.c)
-    target_link_libraries(scip_example rasta)
+            scip/c/main.c scip/c/pointdrv.c)
+    target_link_libraries(scip_example rasta bcm2835)
 
     # scils_example
     add_executable(scils_example

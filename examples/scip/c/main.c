@@ -15,8 +15,8 @@
 #include <signal.h>
 #include <pthread.h>
 
+#include "pointdrv.h"
 
-#define POINT_MOVE_SCRIPT "/home/meckie/src/point_move/point_move.py"
 #define IL_OUT_FIFO "/run/interlocking.sock"
 /** added secsys code end **/
 
@@ -56,12 +56,6 @@ void* thread_func(void* arg) {
     //int thread_id = *(int*)arg; // Get thread ID from argument
     //printf("Thread %d started\n", thread_id);
 
-    int status;
-    char script[sizeof(POINT_MOVE_SCRIPT) + 3 ] = { 0, }; 
-    memcpy(&script, &POINT_MOVE_SCRIPT, sizeof(POINT_MOVE_SCRIPT));
-    char s_arg[] = { 0x20, 0x20, 0x00 };
-    strncat(script,s_arg,3);
-
     scip_point_location scip_location = POINT_NO_TARGET_LOCATION;
 
     while (1) {
@@ -72,18 +66,18 @@ void* thread_func(void* arg) {
             pthread_cond_wait(&cond, &mutex);
         }
 
-        //printf("Thread %d received command: %d\n", thread_id, command);
+        printf("->  Point change thread received command: %d\n", target_location);
         /* move point here !*/
         switch(target_location)
         {
             case 1: /* move to left */
             {
-                script[sizeof(script) - 2] = '0';
+                pointdrv_move(DIRECTION_LEFT, 1);
                 break;
             }
             case 2: /* move to right */
             {
-                script[sizeof(script) - 2] = '1';
+                pointdrv_move(DIRECTION_RIGHT, 1);
                 break;
             }
             default:
@@ -92,33 +86,38 @@ void* thread_func(void* arg) {
                 break;
             }
         }
-        printf("Running script %s \n", script); /* debug & remove*/
-
-        status = system(script);
-        printf("Got exit code %d \n", (status / 256)); /* debug & remove*/
-
-        switch ((status / 256))
+        printf("->  Checking point location ...\n");
+        sleep(1);
+        switch(pointdrv_get_postion())
         {
-            case 5: /* left position */
+            /* left position */
+            case POSITION_LEFT:
             {
                 scip_location = POINT_LOCATION_LEFT;
                 break;
             }
-            case 6: /* right position */
+            /* right position */
+            case POSITION_RIGHT:
             {
                 scip_location = POINT_LOCATION_RIGHT;
                 break;
             }
-            default: /* no position */
+            case POSITION_UNKNOWN:
+            {
+                scip_location = POINT_NO_TARGET_LOCATION;
+                break;
+            }
+            /* no position */
+            default: 
             {
                 scip_location = POINT_NO_TARGET_LOCATION;
                 break;
             }
         }
-        printf("Sending back location status...\n");
+        printf("->  Sending back location status %d...\n", scip_location);
         sci_return_code code = scip_send_location_status(tmp_p, tmp_sender, scip_location);
         if (code == SUCCESS){
-            printf("Sent location status\n");
+            printf("->  Sent location status\n");
         }
         else
         {
@@ -145,11 +144,16 @@ void send_cntrl_state(char dev, char state)
     char * fifo = IL_OUT_FIFO;
     fd = open(fifo, O_WRONLY | O_NONBLOCK);
 
-    printf("Sending interlocking status %c ...\n", state);
+    if(fd<0)
+    {
+        printf("->  Can't write interlocking status %c to pipe. No listener.\n", state);
+        return;
+    }
 
+    printf("Writing interlocking status %c to Pipe ...\n", state);
     char wr_req[3] = {dev, state, '\0'};
-
     write(fd, wr_req, 2);
+
     close(fd);    
 }
 
@@ -198,6 +202,7 @@ void onChangeLocation(scip_t * p, char * sender, scip_point_target_location loca
     pthread_mutex_unlock(&mutex); // Release the mutex
     /** added secsys code end **/
 
+    /* disabled original code */
     //printf("Sending back location status...\n");
     //sci_return_code code = scip_send_location_status(p, sender, scip_location);
     //if (code == SUCCESS){
@@ -233,7 +238,6 @@ void onLocationStatus(scip_t * p, char * sender, scip_point_location location){
             break;
         }
     }
-     
 }
 
 int main(int argc, char *argv[]){
@@ -262,6 +266,8 @@ int main(int argc, char *argv[]){
     toServer[1].port = 8889;
 
     /** added secsys code start **/
+    struct point_drv_cfg pdrv_cfg;
+
     pthread_t tid;
     if (strcmp(argv[1], "c") == 0)
     {
@@ -272,7 +278,18 @@ int main(int argc, char *argv[]){
     }
     else if (strcmp(argv[1], "s") == 0)
     {
-        /* server: create thread for unblock python script call */
+        pdrv_cfg.drv_pin_1 = RPI_V2_GPIO_P1_11;   /* GPIO 17 */
+        pdrv_cfg.drv_pin_2 = RPI_V2_GPIO_P1_12;   /* GPIO 18 */
+        pdrv_cfg.drv_pin_3 = RPI_V2_GPIO_P1_13;   /* GPIO 27 */
+        pdrv_cfg.drv_pin_4 = RPI_V2_GPIO_P1_15;   /* GPIO 22 */
+        pdrv_cfg.pos_pin_1 = RPI_V2_GPIO_P1_18;   /* GPIO 24 Left Stop */
+        pdrv_cfg.pos_pin_2 = RPI_V2_GPIO_P1_16;   /* GPIO 23 Right Stop */
+        pdrv_cfg.half_steps = 1;                  /*  smother run w/ half steps */
+        if(!pointdrv_init(pdrv_cfg))
+        {
+            exit(1);
+        }
+        /* server: Thread for non-blocking point move  */
         pthread_mutex_init(&mutex, NULL); 
         pthread_cond_init(&cond, NULL); 
         int thread_id = 1;
@@ -324,7 +341,7 @@ int main(int argc, char *argv[]){
             {
                 case 'l':
                 {
-                    printf("->   Moving Left\n");
+                    printf("->   Moving left\n");
                     sci_return_code code = scip_send_change_location(scip, SCI_NAME_S, POINT_LOCATION_CHANGE_TO_LEFT);
                     if (code == SUCCESS){
                         send_cntrl_state('a', 'l');
@@ -336,7 +353,7 @@ int main(int argc, char *argv[]){
                 }
                 case 'r':
                 {
-                    printf("->   Moving Right\n");
+                    printf("->   Moving right\n");
                     sci_return_code code = scip_send_change_location(scip, SCI_NAME_S, POINT_LOCATION_CHANGE_TO_RIGHT);
                     if (code == SUCCESS){
                         send_cntrl_state('a', 'r');

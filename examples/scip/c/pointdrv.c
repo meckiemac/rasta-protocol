@@ -1,10 +1,11 @@
 
 #include <stdint.h>
+#include <stdio.h>
 #include "pointdrv.h"
 
 
 #define STANDARD_STEPS 420  /* 5.625*(1/64) per step, 4096 steps is 360° */
-#define STEP_DELAY  3 
+#define STEP_DELAY  5 
 
 
 #define COUNT_OF(x) ((sizeof(x)/sizeof(0[x])) / ((size_t)(!(sizeof(x) % sizeof(0[x])))))
@@ -21,8 +22,8 @@ uint8_t half_step_sequence[8][4] = {{ HIGH,  LOW,  LOW, HIGH},
 static struct point_drv_cfg p_drv_cfg;
 
 static int point_configure_interface(struct point_drv_cfg* cfg);
-static void point_move(struct point_drv_cfg* cfg, int direction, int force);
-static int point_get_position(struct point_drv_cfg* cfg);
+static void point_move(struct point_drv_cfg* cfg, enum point_drv_direction direction, int force);
+static enum point_drv_position point_get_position(struct point_drv_cfg* cfg);
 static int point_motor_disable(struct point_drv_cfg* cfg);
 
 /** Public Interface **/
@@ -35,9 +36,9 @@ int pointdrv_init(struct point_drv_cfg cfg)
     return 1;
 };
 
-void pointdrv_move(int direction, int force)
+void pointdrv_move(enum point_drv_direction direction, int force)
 {
-    if(direction == 0)
+    if( (direction != DIRECTION_LEFT) && (direction != DIRECTION_RIGHT))
     {
         return;
     }
@@ -46,13 +47,13 @@ void pointdrv_move(int direction, int force)
         && (!point_configure_interface(&p_drv_cfg)))
     {
         bcm2835_close();
-        return 0;
+        return;
     }
 
     if (force == 0)
     {
-        if(   ((direction < 0) && (point_get_position(&p_drv_cfg) <= 0)) 
-            || ((direction > 0) && (point_get_position(&p_drv_cfg) >= 0))  )
+        if(   ((direction == DIRECTION_LEFT) && (point_get_position(&p_drv_cfg) != POSITION_RIGHT)) 
+            || ((direction == DIRECTION_RIGHT) && (point_get_position(&p_drv_cfg) != POSITION_LEFT))  )
         {
             printf("Error, point not in end postion. Use force = 1 to override.\n");
             bcm2835_close();
@@ -60,19 +61,19 @@ void pointdrv_move(int direction, int force)
         }
     }
 
-    point_move(&p_drv_cfg, int direction, int force);
+    point_move(&p_drv_cfg, direction, force);
 
     bcm2835_close();
 }
 
-int pointdrv_get_postion()
+enum point_drv_position pointdrv_get_postion()
 {
-    int retval = 0;
+    enum point_drv_position retval = 0;
     if (!bcm2835_init() 
         && (!point_configure_interface(&p_drv_cfg)))
     {
         bcm2835_close();
-        return 0;
+        return retval;
     }
     retval = point_get_position(&p_drv_cfg);
     bcm2835_close();
@@ -100,7 +101,7 @@ static int point_configure_interface(struct point_drv_cfg* cfg)
 return 1;
 }
 
-static void point_move(struct point_drv_cfg* cfg, int direction, int force)
+static void point_move(struct point_drv_cfg* cfg, enum point_drv_direction direction, int force)
 {
     int motor_step_counter = 0;
 
@@ -111,12 +112,12 @@ static void point_move(struct point_drv_cfg* cfg, int direction, int force)
 
     for (uint32_t i = 0; i < STANDARD_STEPS; i++)
     {
-        if((direction < 0) && (point_get_position(cfg) == -1))
+        if((direction == DIRECTION_LEFT) && (point_get_position(cfg) == POSITION_LEFT))
         {
             printf("Endlage Links erreicht\n");
             break;
         }
-        else if((direction > 0) && (point_get_position(cfg) == 1))
+        else if((direction == DIRECTION_RIGHT) && (point_get_position(cfg) == POSITION_RIGHT))
         {
             printf("Endlage Rechts erreicht\n");
             break;
@@ -136,22 +137,27 @@ static void point_move(struct point_drv_cfg* cfg, int direction, int force)
         motor_step_counter = (motor_step_counter + (1 * direction)+ 8) % 8 ;
     }
 
-    point_drv_disable(cfg);
+    point_motor_disable(cfg);
 }
 
-static int point_get_position(struct point_drv_cfg* cfg)
+static enum point_drv_position point_get_position(struct point_drv_cfg* cfg)
 {
-    if(bcm2835_gpio_lev(cfg->pos_pin_1) == HIGH)
+    // TODO both pins up is missing
+    if((bcm2835_gpio_lev(cfg->pos_pin_1) == HIGH) && (bcm2835_gpio_lev(cfg->pos_pin_2) == HIGH))
     {
-        return -1;
+        return POSITION_UNKNOWN;
+    }
+    else if(bcm2835_gpio_lev(cfg->pos_pin_1) == HIGH)
+    {
+        return POSITION_LEFT;
     }
     else if(bcm2835_gpio_lev(cfg->pos_pin_2) == HIGH)
     {
-        return 1;
+        return POSITION_RIGHT;
     }
     else
     {
-        return 0;
+        return POSITION_UNKNOWN;
     }
 }
 
